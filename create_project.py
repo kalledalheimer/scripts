@@ -597,4 +597,20 @@ Here is a summary of the configuration and your next steps.
     getting_started += "\n".join(sorted(SUMMARY_LOG))
     
     if NEXT_STEPS:
-        getting_
+        getting_started += "\n\n## Next Steps\n\n"
+        for i, step in enumerate(sorted(list(set(NEXT_STEPS))), 1):
+            getting_started += f"{i}. {step}\n"
+            
+    write_file(project_path / "doc" / "GETTING_STARTED.md", getting_started)
+    
+    print_header("✅ Project Scaffolding Complete!")
+    print(f"Your new project is ready at: ./{project_name}")
+    print(f"A summary and next steps guide has been created at: ./{project_name}/doc/GETTING_STARTED.md")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\nOperation cancelled by user. Exiting.")
+        sys.exit(0)
