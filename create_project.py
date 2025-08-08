@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Project Scaffolding Script (v3)
+Project Scaffolding Script (v4)
 
 This script interactively scaffolds a new software project based on user input.
 It is designed to be run from the command line and has no external dependencies
@@ -12,14 +12,14 @@ Features:
 - **Language Support:** Scaffolds projects for Python, C++, Rust, and Dart/Flutter.
 - **Tooling:**
     - Initializes a Git repository and creates a language-specific .gitignore.
-    - Integrates with the GitHub CLI ('gh') to create a remote repository.
+    - Integrates with the GitHub CLI ('gh') to create a new remote repository
+      or use an existing one gracefully.
     - Generates configuration files for VS Code (.vscode).
     - Adds configuration support for GitHub Copilot.
     - Creates a basic CI workflow for GitHub Actions.
 - **AI Developer Integration:**
     - Configures project-specific files for AI tools like Gemini, Cursor, and Claude.
-    - Allows enabling various Model Context Protocol (MCP) servers, including custom
-      ones for building, file system access, and code analysis.
+    - Allows enabling various Model Context Protocol (MCP) servers.
 - **Configuration:**
     - Uses a central config file (~/.dev_scripter/config.ini) to store your
       details like GitHub username and API keys, so you only enter them once.
@@ -184,35 +184,10 @@ dist/
 /.dev_scripter/
 """
     lang_specific = {
-        "Python": """
-# Python
-__pycache__/
-*.pyc
-*.pyo
-venv/
-.pytest_cache/
-""",
-        "C++": """
-# C++
-*.o
-*.out
-*.exe
-*.dll
-*.so
-*.a
-CMakeLists.txt.user
-**/CMakeCache.txt
-**/CMakeFiles/
-""",
-        "Rust": """
-# Rust
-/target/
-""",
-        "Dart/Flutter": """
-# Flutter
-.dart_tool/
-.packages
-"""
+        "Python": "# Python\n__pycache__/\n*.pyc\n*.pyo\nvenv/\n.pytest_cache/\n",
+        "C++": "# C++\n*.o\n*.out\n*.exe\n*.dll\n*.so\n*.a\nCMakeLists.txt.user\n**/CMakeCache.txt\n**/CMakeFiles/\n",
+        "Rust": "# Rust\n/target/\n",
+        "Dart/Flutter": "# Flutter\n.dart_tool/\n.packages\n",
     }
     return (common + lang_specific.get(language, "")).strip()
 
@@ -423,7 +398,6 @@ TEST(SampleTest, AssertionTrue) {
 def scaffold_rust(project_path, settings):
     print_header("Scaffolding Rust Project")
     if not run_command(["rustc", "--version"], cwd="."): return
-    # Use 'cargo init' to initialize in the existing directory
     run_command(["cargo", "init"], cwd=project_path)
     
     SUMMARY_LOG.append("* **Rust Setup:** Initialized with `cargo init`.")
@@ -466,17 +440,14 @@ def configure_ai_tools(project_path, settings, config):
     }
     
     build_commands = {
-        "C++": "cmake --build ./build",
-        "Rust": "cargo build",
-        "Dart/Flutter": "flutter build",
-        "Python": "echo 'No build step for python'"
+        "C++": "cmake --build ./build", "Rust": "cargo build",
+        "Dart/Flutter": "flutter build", "Python": "echo 'No build step for python'"
     }
     all_servers["build-system"]["args"] = build_commands[settings['language']].split()
     all_servers["build-system"]["command"] = all_servers["build-system"]["args"].pop(0)
 
     enabled_servers = select_many("Select MCP servers to enable:", list(all_servers.keys()))
-    if not enabled_servers:
-        return
+    if not enabled_servers: return
 
     SUMMARY_LOG.append(f"* **Enabled MCPs:** `{', '.join(enabled_servers)}`.")
     NEXT_STEPS.append("Some MCP servers require Node.js. Run `npm install` in the project root if you encounter `npx` errors.")
@@ -486,7 +457,6 @@ def configure_ai_tools(project_path, settings, config):
         SUMMARY_LOG.append("* **AI Config:** Taskmaster AI configured. Manual initialization required (see next steps).")
 
     mcp_config_obj = {name: all_servers[name] for name in enabled_servers}
-    
     selected_tools = settings.get('ai_tools', [])
 
     if "Gemini" in selected_tools:
@@ -560,10 +530,8 @@ def main():
     write_file(project_path / ".gitignore", get_gitignore_content(settings['language']))
 
     lang_scaffolders = {
-        "Python": scaffold_python,
-        "C++": scaffold_cpp,
-        "Rust": scaffold_rust,
-        "Dart/Flutter": scaffold_flutter,
+        "Python": scaffold_python, "C++": scaffold_cpp,
+        "Rust": scaffold_rust, "Dart/Flutter": scaffold_flutter,
     }
     lang_scaffolders[settings['language']](project_path, settings)
 
@@ -585,17 +553,34 @@ def main():
         write_file(project_path / ".github/copilot/config.yml", get_copilot_config())
         SUMMARY_LOG.append("* **GitHub Copilot:** Added `.github/copilot/config.yml` to exclude files.")
 
-    if settings['ai_tools']:
+    # This check now covers Gemini, Cursor, and Claude, but not Copilot which is handled above.
+    if any(tool in settings['ai_tools'] for tool in ["Gemini", "Cursor", "Claude"]):
         configure_ai_tools(project_path, settings, config)
         
     if settings['use_github']:
-        gh_user = config['USER']['github_username']
+        gh_user = config['USER'].get('github_username')
         if gh_user:
-            if run_command(["gh", "repo", "create", f"{gh_user}/{project_name}", "--private", "-y"], cwd=project_path):
-                SUMMARY_LOG.append(f"* **GitHub:** Created private repository `{gh_user}/{project_name}`.")
-                NEXT_STEPS.append("Push the initial commit to GitHub: `git add . && git commit -m 'Initial commit' && git push -u origin main`.")
+            repo_full_name = f"{gh_user}/{project_name}"
+            print(f"  Checking for GitHub repository {repo_full_name}...")
+            
+            repo_check = subprocess.run(["gh", "repo", "view", repo_full_name], capture_output=True, text=True)
+
+            if repo_check.returncode == 0:
+                print(f"  ✓ Repository {repo_full_name} already exists. Using existing repository.")
+                SUMMARY_LOG.append(f"* **GitHub:** Using existing repository `{repo_full_name}`.")
+                # Ensure the local git repo points to the existing remote
+                subprocess.run(["git", "remote", "remove", "origin"], cwd=project_path, capture_output=True)
+                run_command(["git", "remote", "add", "origin", f"https://github.com/{repo_full_name}.git"], cwd=project_path)
+            else:
+                print(f"  Repository does not exist. Creating...")
+                if run_command(["gh", "repo", "create", repo_full_name, "--private", "-y"], cwd=project_path):
+                    SUMMARY_LOG.append(f"* **GitHub:** Created new private repository `{repo_full_name}`.")
+                else:
+                    SUMMARY_LOG.append(f"* **GitHub:** Failed to create repository.")
+            
+            NEXT_STEPS.append("Push the initial commit to GitHub: `git add . && git commit -m 'Initial commit' && git push -u origin main`.")
         else:
-            print("  [Skipped] GitHub repo creation requires a username in the config.")
+            print("  [Skipped] GitHub repo creation requires a username in the config file.")
 
     print_header("Generating Final Documentation")
     
@@ -612,20 +597,4 @@ Here is a summary of the configuration and your next steps.
     getting_started += "\n".join(sorted(SUMMARY_LOG))
     
     if NEXT_STEPS:
-        getting_started += "\n\n## Next Steps\n\n"
-        for i, step in enumerate(sorted(list(set(NEXT_STEPS))), 1):
-            getting_started += f"{i}. {step}\n"
-            
-    write_file(project_path / "doc" / "GETTING_STARTED.md", getting_started)
-    
-    print_header("✅ Project Scaffolding Complete!")
-    print(f"Your new project is ready at: ./{project_name}")
-    print(f"A summary and next steps guide has been created at: ./{project_name}/doc/GETTING_STARTED.md")
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\n\nOperation cancelled by user. Exiting.")
-        sys.exit(0)
+        getting_
