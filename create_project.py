@@ -2,30 +2,31 @@
 # -*- coding: utf-8 -*-
 
 """
-Project Scaffolding Script (v4)
+Project Scaffolding Script (v6)
 
 This script interactively scaffolds a new software project based on user input.
-It is designed to be run from the command line and has no external dependencies
-beyond a standard Python 3 installation.
+It supports both single-language projects and complex, multi-language monorepos.
 
 Features:
+- **Project Types:**
+    - **Single-Language:** Standard project structure.
+    - **Multi-Language:** Creates a subdirectory for each language, each with its
+      own build system, plus a top-level script to build all components.
 - **Language Support:** Scaffolds projects for Python, C++, Rust, and Dart/Flutter.
 - **Tooling:**
-    - Initializes a Git repository and creates a language-specific .gitignore.
+    - Initializes a Git repository with 'main' as the default branch.
     - Integrates with the GitHub CLI ('gh') to create a new remote repository
       or use an existing one gracefully.
-    - Generates configuration files for VS Code (.vscode).
-    - Adds configuration support for GitHub Copilot.
-    - Creates a basic CI workflow for GitHub Actions.
+    - Generates configuration for VS Code and GitHub Copilot.
+    - Creates a CI workflow for GitHub Actions adapted for the project type.
 - **AI Developer Integration:**
     - Configures project-specific files for AI tools like Gemini, Cursor, and Claude.
-    - Allows enabling various Model Context Protocol (MCP) servers.
+    - The "Build System" MCP is configured to use the top-level build script in
+      multi-language projects.
 - **Configuration:**
-    - Uses a central config file (~/.dev_scripter/config.ini) to store your
-      details like GitHub username and API keys, so you only enter them once.
+    - Uses a central config file (~/.dev_scripter/config.ini) for user details and API keys.
 - **Documentation:**
-    - Generates a `doc/GETTING_STARTED.md` file in each new project, detailing
-      the setup and outlining the next steps for the developer.
+    - Generates a `doc/GETTING_STARTED.md` file detailing the specific setup and next steps.
 
 Usage:
 1. Save this script as `create_project.py`.
@@ -168,32 +169,21 @@ def write_file(path, content):
     path.write_text(content.strip() + "\n")
     print(f"  ✓ Created {path}")
 
-def get_gitignore_content(language):
-    """Returns .gitignore content for a given language."""
-    common = """
-# General
-.DS_Store
-*.swp
-*.swo
-.env
-.idea/
-build/
-dist/
-
-# Scripter Config
-/.dev_scripter/
-"""
-    lang_specific = {
+def get_gitignore_content(languages):
+    """Returns .gitignore content for a given list of languages."""
+    common = "# General\n.DS_Store\n*.swp\n*.swo\n.env\n.idea/\nbuild/\ndist/\n\n# Scripter Config\n/.dev_scripter/\n"
+    lang_specific_map = {
         "Python": "# Python\n__pycache__/\n*.pyc\n*.pyo\nvenv/\n.pytest_cache/\n",
         "C++": "# C++\n*.o\n*.out\n*.exe\n*.dll\n*.so\n*.a\nCMakeLists.txt.user\n**/CMakeCache.txt\n**/CMakeFiles/\n",
         "Rust": "# Rust\n/target/\n",
         "Dart/Flutter": "# Flutter\n.dart_tool/\n.packages\n",
     }
-    return (common + lang_specific.get(language, "")).strip()
+    lang_specific_content = "\n".join(lang_specific_map.get(lang, "") for lang in languages)
+    return (common + "\n" + lang_specific_content).strip()
 
 def get_vscode_extensions(settings):
-    """Returns recommended VS Code extensions."""
-    exts = {
+    """Returns recommended VS Code extensions for a list of languages."""
+    ext_map = {
         "Python": ["ms-python.python", "ms-python.vscode-pylance", "charliermarsh.ruff"],
         "C++": ["ms-vscode.cpptools", "ms-vscode.cmake-tools"],
         "Rust": ["rust-lang.rust-analyzer", "vadimcn.vscode-lldb"],
@@ -207,224 +197,124 @@ def get_vscode_extensions(settings):
     if "Claude" in selected_tools: base.append("Anthropic.anthropic-vscode")
     if "GitHub Copilot" in selected_tools: base.extend(["github.copilot", "github.copilot-chat"])
     
-    final_exts = base + exts.get(settings['language'], [])
-    return json.dumps({"recommendations": sorted(list(set(final_exts)))}, indent=2)
+    final_exts = set(base)
+    for lang in settings['languages']:
+        final_exts.update(ext_map.get(lang, []))
+        
+    return json.dumps({"recommendations": sorted(list(final_exts))}, indent=2)
 
 def get_ci_workflow(settings):
-    """Generates a basic GitHub Actions CI workflow."""
-    lang = settings['language']
-    workflow = {
-        "Python": """
-name: Python CI
+    """Generates a GitHub Actions workflow appropriate for the project type."""
+    is_multilang = len(settings.get('languages', [])) > 1
+    
+    if is_multilang:
+        return """
+name: Multi-Language CI
 on: [push, pull_request]
 jobs:
-  build:
+  build_all:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    - name: Test with pytest
-      run: pip install pytest && pytest
-""",
-        "C++": """
-name: C++ CI with CMake
-on: [push, pull_request]
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Configure CMake
-      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=Release
-    - name: Build
-      run: cmake --build ${{github.workspace}}/build --config Release
-    - name: Test
-      working-directory: ${{github.workspace}}/build
-      run: ctest -C Release
-""",
-        "Rust": """
-name: Rust CI
-on: [push, pull_request]
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
-""",
-        "Dart/Flutter": """
-name: Flutter CI
-on: [push, pull_request]
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - uses: subosito/flutter-action@v2
-      with:
-        channel: 'stable'
-    - name: Install dependencies
-      run: flutter pub get
-    - name: Analyze project
-      run: flutter analyze
-    - name: Run tests
-      run: flutter test
+    - name: Set up build environment (install dependencies if needed)
+      # e.g., sudo apt-get update && sudo apt-get install -y cmake g++ ...
+      run: echo "Setting up environment..."
+    - name: Run top-level build script
+      run: chmod +x build.sh && ./build.sh
 """
+    # Fallback to single-language CI logic
+    lang = settings['languages'][0] if settings.get('languages') else ''
+    workflow_map = {
+        "Python": "name: Python CI\non: [push, pull_request]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n    - uses: actions/checkout@v4\n    - name: Set up Python\n      uses: actions/setup-python@v4\n      with:\n        python-version: '3.11'\n    - name: Install dependencies\n      run: |\n        python -m pip install --upgrade pip\n        pip install -r requirements.txt\n    - name: Test with pytest\n      run: pip install pytest && pytest\n",
+        "C++": "name: C++ CI with CMake\non: [push, pull_request]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n    - uses: actions/checkout@v4\n    - name: Configure CMake\n      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=Release\n    - name: Build\n      run: cmake --build ${{github.workspace}}/build --config Release\n    - name: Test\n      working-directory: ${{github.workspace}}/build\n      run: ctest -C Release\n",
+        "Rust": "name: Rust CI\non: [push, pull_request]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n    - uses: actions/checkout@v4\n    - name: Build\n      run: cargo build --verbose\n    - name: Run tests\n      run: cargo test --verbose\n",
+        "Dart/Flutter": "name: Flutter CI\non: [push, pull_request]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n    - uses: actions/checkout@v4\n    - uses: subosito/flutter-action@v2\n      with:\n        channel: 'stable'\n    - name: Install dependencies\n      run: flutter pub get\n    - name: Analyze project\n      run: flutter analyze\n    - name: Run tests\n      run: flutter test\n"
     }
-    return workflow.get(lang, "# No CI workflow generated for this language yet.")
+    return workflow_map.get(lang, "# No CI workflow generated for this language yet.")
 
 def get_copilot_config():
     """Returns a basic .github/copilot/config.yml content."""
-    return """
-# Configuration for GitHub Copilot
-github:
-  copilot:
-    # Exclude specified files and directories from Copilot's context
-    excluded:
-      - "**/doc/**"
-      - "**/.env"
-      - "**/GETTING_STARTED.md"
+    return "# Configuration for GitHub Copilot\ngithub:\n  copilot:\n    excluded:\n      - \"**/doc/**\"\n      - \"**/.env\"\n      - \"**/GETTING_STARTED.md\"\n"
+
+def generate_toplevel_build_script(project_path, components):
+    """Generates the top-level build.sh script."""
+    build_script_content = "#!/bin/bash\n# Exit immediately if a command fails.\nset -e\n"
+    build_commands = {
+        "C++": "cmake --build ./build",
+        "Rust": "cargo build",
+        "Dart/Flutter": "flutter build",
+        "Python": "echo 'Python component has no build step.'"
+    }
+    for comp in components:
+        cmd = build_commands.get(comp['lang'])
+        if cmd:
+            build_script_content += f"""
+echo ""
+echo "--- Building {comp['lang']} component ({comp['name']}) ---"
+(cd {comp['name']} && {cmd})
 """
+    build_script_content += '\necho ""\necho "All components built successfully!"\n'
+    write_file(project_path / "build.sh", build_script_content)
+    # Make it executable
+    (project_path / "build.sh").chmod(0o755)
 
 # --- Language Scaffolding ---
 
-def scaffold_python(project_path, settings):
-    print_header("Scaffolding Python Project")
-    run_command([sys.executable, "-m", "venv", "venv"], cwd=project_path)
-    SUMMARY_LOG.append("* **Python Setup:** `venv` with `requirements.txt`.")
-    
+def scaffold_python(component_path, settings):
+    print(f"  > Scaffolding Python in ./{component_path.name}")
+    run_command([sys.executable, "-m", "venv", "venv"], cwd=component_path)
+    SUMMARY_LOG.append(f"* **Component `{component_path.name}` (Python):** `venv` with `requirements.txt`.")
     reqs = []
-    if confirm("Add 'pytest' for testing?"):
+    if confirm("  Add 'pytest' for this component?"):
         reqs.append("pytest")
-        (project_path / "tests").mkdir()
-        write_file(project_path / "tests" / "test_sample.py", "def test_example():\n    assert True\n")
-
-    pkgs = select_many("Select common packages to add:", ["pydantic", "requests", "rich"])
+        (component_path / "tests").mkdir()
+        write_file(component_path / "tests" / "test_sample.py", "def test_example():\n    assert True\n")
+    pkgs = select_many("  Select Python packages for this component:", ["pydantic", "requests", "rich"])
     reqs.extend(pkgs)
-    
     if reqs:
-        write_file(project_path / "requirements.txt", "\n".join(sorted(reqs)))
-        SUMMARY_LOG.append(f"* **Python Packages:** `{', '.join(sorted(reqs))}`.")
-        NEXT_STEPS.append("Install Python dependencies: `source venv/bin/activate` followed by `pip install -r requirements.txt`.")
+        write_file(component_path / "requirements.txt", "\n".join(sorted(reqs)))
 
-def scaffold_cpp(project_path, settings):
-    print_header("Scaffolding C++ Project")
-    (project_path / "src").mkdir()
-    (project_path / "include").mkdir()
-    
-    main_content = """
-#include <iostream>
-int main() {
-    std::cout << "Hello, C++ World!" << std::endl;
-    return 0;
-}"""
-    write_file(project_path / "src" / "main.cpp", main_content)
+def scaffold_cpp(component_path, settings):
+    print(f"  > Scaffolding C++ in ./{component_path.name}")
+    (component_path / "src").mkdir()
+    (component_path / "include").mkdir()
+    write_file(component_path / "src" / "main.cpp", '#include <iostream>\nint main() {\n    std::cout << "Hello, C++ World!" << std::endl;\n    return 0;\n}')
+    cmake_content = f"cmake_minimum_required(VERSION 3.15)\nproject({component_path.name} VERSION 1.0)\n\nset(CMAKE_CXX_STANDARD 17)\nset(CMAKE_CXX_STANDARD_REQUIRED True)\n\nadd_executable(${{PROJECT_NAME}} src/main.cpp)\n"
+    if confirm("  Set up with Qt support for this component?"):
+        cmake_content += "find_package(Qt6 COMPONENTS Widgets Test REQUIRED)\ntarget_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets)\nenable_testing()\nadd_executable(run_tests tests/test_main.cpp)\ntarget_link_libraries(run_tests PRIVATE Qt6::Test)\nqt_add_test(run_tests run_tests)\n"
+        (component_path / "tests").mkdir()
+        write_file(component_path / "tests" / "test_main.cpp", '#include <QtTest/QtTest>\nclass SampleTest: public QObject {\n    Q_OBJECT\nprivate slots:\n    void testSample() { QVERIFY(true); }\n};\nQTEST_MAIN(SampleTest)\n#include "test_main.moc"')
+    elif confirm("  Set up with GoogleTest for this component?"):
+        cmake_content += "include(FetchContent)\nFetchContent_Declare(\n  googletest\n  URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip\n)\nFetchContent_MakeAvailable(googletest)\n\nenable_testing()\nadd_executable(run_tests tests/test_main.cpp)\ntarget_link_libraries(run_tests PRIVATE gtest_main)\ninclude(GoogleTest)\ngtest_discover_tests(run_tests)\n"
+        (component_path / "tests").mkdir()
+        write_file(component_path / "tests" / "test_main.cpp", '#include <gtest/gtest.h>\nTEST(SampleTest, AssertionTrue) {\n    ASSERT_TRUE(true);\n}')
+    write_file(component_path / "CMakeLists.txt", cmake_content)
+    SUMMARY_LOG.append(f"* **Component `{component_path.name}` (C++):** CMake project.")
 
-    cmake_content = f"""
-cmake_minimum_required(VERSION 3.15)
-project({settings['project_name']} VERSION 1.0)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
-
-add_executable(${{PROJECT_NAME}} src/main.cpp)
-"""
-    
-    use_qt = confirm("Set up with Qt support?")
-    if use_qt:
-        SUMMARY_LOG.append("* **C++ Setup:** CMake with Qt Test support.")
-        cmake_content += """
-find_package(Qt6 COMPONENTS Widgets Test REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets)
-
-# Add Qt Test setup
-enable_testing()
-add_executable(run_tests tests/test_main.cpp)
-target_link_libraries(run_tests PRIVATE Qt6::Test)
-qt_add_test(run_tests run_tests)
-"""
-        (project_path / "tests").mkdir()
-        write_file(project_path / "tests" / "test_main.cpp", """
-#include <QtTest/QtTest>
-class SampleTest: public QObject {
-    Q_OBJECT
-private slots:
-    void testSample() {
-        QVERIFY(true);
-    }
-};
-QTEST_MAIN(SampleTest)
-#include "test_main.moc"
-""")
-        NEXT_STEPS.append("Ensure you have Qt 6 installed and your environment is configured for CMake to find it.")
-
-    else:
-        if confirm("Set up with GoogleTest for testing?"):
-            SUMMARY_LOG.append("* **C++ Setup:** CMake with GoogleTest.")
-            cmake_content += """
-include(FetchContent)
-FetchContent_Declare(
-  googletest
-  URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
-)
-FetchContent_MakeAvailable(googletest)
-
-enable_testing()
-add_executable(run_tests tests/test_main.cpp)
-target_link_libraries(run_tests PRIVATE gtest_main)
-include(GoogleTest)
-gtest_discover_tests(run_tests)
-"""
-            (project_path / "tests").mkdir()
-            write_file(project_path / "tests" / "test_main.cpp", """
-#include <gtest/gtest.h>
-TEST(SampleTest, AssertionTrue) {
-    ASSERT_TRUE(true);
-}""")
-            NEXT_STEPS.append("Run `ctest` from your build directory to execute tests.")
-
-    write_file(project_path / "CMakeLists.txt", cmake_content)
-
-def scaffold_rust(project_path, settings):
-    print_header("Scaffolding Rust Project")
+def scaffold_rust(component_path, settings):
+    print(f"  > Scaffolding Rust in ./{component_path.name}")
     if not run_command(["rustc", "--version"], cwd="."): return
-    run_command(["cargo", "init"], cwd=project_path)
-    
-    SUMMARY_LOG.append("* **Rust Setup:** Initialized with `cargo init`.")
-    
-    crates = select_many("Select common crates to add:", ["serde --features derive", "tokio --features full", "anyhow", "clap --features derive"])
+    run_command(["cargo", "init"], cwd=component_path)
+    SUMMARY_LOG.append(f"* **Component `{component_path.name}` (Rust):** Initialized with `cargo init`.")
+    crates = select_many("  Select Rust crates for this component:", ["serde --features derive", "tokio --features full", "anyhow", "clap --features derive"])
     if crates:
         for crate in crates:
-            run_command(["cargo", "add"] + crate.split(), cwd=project_path)
-        SUMMARY_LOG.append(f"* **Rust Crates:** `{', '.join(c.split()[0] for c in crates)}`.")
-        NEXT_STEPS.append("Run `cargo build` to build the project.")
+            run_command(["cargo", "add"] + crate.split(), cwd=component_path)
 
-def scaffold_flutter(project_path, settings):
-    print_header("Scaffolding Dart/Flutter Project")
+def scaffold_flutter(component_path, settings):
+    # Flutter must create its own directory.
+    print(f"  > Scaffolding Flutter in ./{component_path.name}")
     if not run_command(["flutter", "--version"], cwd="."): return
-    run_command(["flutter", "create", str(project_path)], cwd=Path("."))
-    SUMMARY_LOG.append("* **Flutter Setup:** Initialized with `flutter create`.")
-    
-    pkgs = select_many("Select common packages to add:", ["http", "provider", "sqflite", "path_provider"])
+    run_command(["flutter", "create", component_path.name], cwd=component_path.parent)
+    SUMMARY_LOG.append(f"* **Component `{component_path.name}` (Dart/Flutter):** Initialized with `flutter create`.")
+    pkgs = select_many("  Select Flutter packages for this component:", ["http", "provider", "sqflite", "path_provider"])
     if pkgs:
         for pkg in pkgs:
-            run_command(["flutter", "pub", "add", pkg], cwd=project_path)
-        SUMMARY_LOG.append(f"* **Flutter Packages:** `{', '.join(pkgs)}`.")
-        NEXT_STEPS.append("Run `flutter run` to start your application.")
+            run_command(["flutter", "pub", "add", pkg], cwd=component_path)
 
 # --- AI Tooling & MCP Configuration ---
 
-def configure_ai_tools(project_path, settings, config):
+def configure_ai_tools(project_path, settings, components):
     print_header("Configuring AI Developer Tools")
     
     all_servers = {
@@ -434,18 +324,18 @@ def configure_ai_tools(project_path, settings, config):
         "Context7": {"command": "npx", "args": ["-y", "@upstash/context7-mcp"]},
         "taskmaster-ai": {"command": "npx", "args": ["-y", "--package=task-master-ai", "task-master-ai"], "env": {
             "GEMINI_API_KEY": "${env:GEMINI_API_KEY}", "ANTHROPIC_API_KEY": "${env:ANTHROPIC_API_KEY}"}},
-        "build-system": {"command": "echo", "args": ["build-system-mcp-not-implemented"], "description": "MCP for building/running the project."},
+        "build-system": {"command": "./build.sh", "args": [], "description": "MCP for building all project components."},
         "filesystem": {"command": "npx", "args": ["-y", "mcp-server-filesystem", "--root", "."], "description": "MCP for sandboxed file system access."},
         "code-ast": {"command": "echo", "args": ["ast-mcp-not-implemented"], "description": "MCP for Abstract Syntax Tree code analysis."}
     }
     
-    build_commands = {
-        "C++": "cmake --build ./build", "Rust": "cargo build",
-        "Dart/Flutter": "flutter build", "Python": "echo 'No build step for python'"
-    }
-    all_servers["build-system"]["args"] = build_commands[settings['language']].split()
-    all_servers["build-system"]["command"] = all_servers["build-system"]["args"].pop(0)
-
+    if len(components) <= 1: # Single language project
+        build_commands = { "C++": "cmake --build ./build", "Rust": "cargo build", "Dart/Flutter": "flutter build", "Python": "echo 'Python component has no build step.'"}
+        lang = components[0]['lang'] if components else ''
+        if lang in build_commands:
+            all_servers['build-system']['command'] = build_commands[lang].split()[0]
+            all_servers['build-system']['args'] = build_commands[lang].split()[1:]
+    
     enabled_servers = select_many("Select MCP servers to enable:", list(all_servers.keys()))
     if not enabled_servers: return
 
@@ -464,7 +354,7 @@ def configure_ai_tools(project_path, settings, config):
         write_file(project_path / ".gemini" / "settings.json", json.dumps(gemini_config, indent=2))
         write_file(project_path / "GEMINI.md", f"# Gemini Context for {settings['project_name']}")
         SUMMARY_LOG.append("* **AI Config:** Generated `.gemini/settings.json`.")
-    
+
     if "Cursor" in selected_tools:
         cursor_config_obj = json.loads(json.dumps(mcp_config_obj))
         for server in cursor_config_obj.values():
@@ -473,12 +363,11 @@ def configure_ai_tools(project_path, settings, config):
                     if val.startswith("${env:") and val.endswith("}"):
                         var_name = val[6:-1].split(":")[0]
                         config_key = var_name.replace('_PERSONAL_ACCESS_TOKEN', '').replace('_API_KEY', '').lower()
-                        retrieved_key = config['API_KEYS'].get(config_key)
+                        retrieved_key = settings['config']['API_KEYS'].get(config_key)
                         if retrieved_key and 'YOUR_' not in retrieved_key:
                             server['env'][key] = retrieved_key
                         else:
                             server['env'][key] = f"YOUR_{var_name}_HERE"
-        
         cursor_full_config = {"mcpServers": cursor_config_obj}
         write_file(project_path / ".cursor" / "mcp.json", json.dumps(cursor_full_config, indent=2))
         SUMMARY_LOG.append("* **AI Config:** Generated `.cursor/mcp.json`.")
@@ -493,12 +382,22 @@ def configure_ai_tools(project_path, settings, config):
 
 def get_project_settings(config):
     """Gathers all project settings from the user."""
-    settings = {}
+    settings = {'config': config}
     
     print_header("New Project Setup")
     settings['project_name'] = ask_question("Project Name", "my-new-project")
-    settings['language'] = select_one("Select Primary Language", ["Python", "C++", "Rust", "Dart/Flutter"])
     
+    project_type = select_one("Select project type:", ["Single-Language", "Multi-Language"])
+    all_langs = ["Python", "C++", "Rust", "Dart/Flutter"]
+    if project_type == "Single-Language":
+        settings['languages'] = [select_one("Select Primary Language:", all_langs)]
+    else:
+        settings['languages'] = select_many("Select languages to include:", all_langs)
+
+    if not settings['languages']:
+        print("\nNo languages selected. Aborting.")
+        sys.exit(0)
+
     settings['use_docker'] = confirm("Add Docker configuration (Dockerfile)?")
     settings['use_ci'] = confirm("Add basic GitHub Actions CI workflow?")
     settings['use_github'] = confirm("Initialize on GitHub (requires 'gh' CLI)?")
@@ -508,8 +407,6 @@ def get_project_settings(config):
     return settings
 
 def main():
-    """Main script execution function."""
-    
     config = get_or_create_config()
     settings = get_project_settings(config)
     
@@ -524,25 +421,45 @@ def main():
     project_path.mkdir()
 
     SUMMARY_LOG.append(f"* **Project:** `{project_name}`")
-    SUMMARY_LOG.append(f"* **Language:** {settings['language']}")
+    SUMMARY_LOG.append(f"* **Project Type:** {'Multi-Language' if len(settings['languages']) > 1 else 'Single-Language'}")
     
-    run_command(["git", "init"], cwd=project_path)
-    write_file(project_path / ".gitignore", get_gitignore_content(settings['language']))
+    run_command(["git", "init", "-b", "main"], cwd=project_path)
+    write_file(project_path / ".gitignore", get_gitignore_content(settings['languages']))
 
+    print_header("Scaffolding Language Components")
+    language_components = []
+    is_multilang = len(settings['languages']) > 1
+    
     lang_scaffolders = {
         "Python": scaffold_python, "C++": scaffold_cpp,
         "Rust": scaffold_rust, "Dart/Flutter": scaffold_flutter,
     }
-    lang_scaffolders[settings['language']](project_path, settings)
 
-    print_header("Configuring Tooling")
+    for lang in settings['languages']:
+        component_name = lang.lower()
+        if is_multilang:
+            component_name = ask_question(f"  Enter subdirectory name for {lang}", default=lang.lower())
+        
+        component_path = project_path / component_name if is_multilang else project_path
+
+        if lang != "Dart/Flutter" and is_multilang:
+            component_path.mkdir()
+        
+        lang_scaffolders[lang](component_path, settings)
+        language_components.append({'name': component_name, 'lang': lang})
+
+    print_header("Configuring Top-Level Tooling")
     
+    if is_multilang:
+        generate_toplevel_build_script(project_path, language_components)
+        SUMMARY_LOG.append("* **Build System:** Top-level `build.sh` script created.")
+
     write_file(project_path / ".vscode" / "extensions.json", get_vscode_extensions(settings))
-    SUMMARY_LOG.append("* **IDE:** Generated `.vscode/extensions.json`.")
+    SUMMARY_LOG.append("* **IDE:** Generated `.vscode/extensions.json` for all selected languages.")
     NEXT_STEPS.append("If using VS Code, open the project and install recommended extensions when prompted.")
 
     if settings['use_docker']:
-        write_file(project_path / "Dockerfile", f"# Dockerfile for {settings['language']} project\nFROM busybox")
+        write_file(project_path / "Dockerfile", f"# Dockerfile for {project_name}\nFROM busybox")
         SUMMARY_LOG.append("* **Containerization:** Added a placeholder `Dockerfile`.")
     
     if settings['use_ci']:
@@ -551,62 +468,43 @@ def main():
     
     if "GitHub Copilot" in settings['ai_tools']:
         write_file(project_path / ".github/copilot/config.yml", get_copilot_config())
-        SUMMARY_LOG.append("* **GitHub Copilot:** Added `.github/copilot/config.yml` to exclude files.")
+        SUMMARY_LOG.append("* **GitHub Copilot:** Added `.github/copilot/config.yml`.")
 
-    # This check now covers Gemini, Cursor, and Claude, but not Copilot which is handled above.
     if any(tool in settings['ai_tools'] for tool in ["Gemini", "Cursor", "Claude"]):
-        configure_ai_tools(project_path, settings, config)
+        configure_ai_tools(project_path, settings, language_components)
         
     if settings['use_github']:
         gh_user = config['USER'].get('github_username')
         if gh_user:
             repo_full_name = f"{gh_user}/{project_name}"
             print(f"  Checking for GitHub repository {repo_full_name}...")
-            
             repo_check = subprocess.run(["gh", "repo", "view", repo_full_name], capture_output=True, text=True)
-
             if repo_check.returncode == 0:
                 print(f"  ✓ Repository {repo_full_name} already exists. Using existing repository.")
                 SUMMARY_LOG.append(f"* **GitHub:** Using existing repository `{repo_full_name}`.")
-                # Ensure the local git repo points to the existing remote
                 subprocess.run(["git", "remote", "remove", "origin"], cwd=project_path, capture_output=True)
                 run_command(["git", "remote", "add", "origin", f"https://github.com/{repo_full_name}.git"], cwd=project_path)
             else:
                 print(f"  Repository does not exist. Creating...")
                 if run_command(["gh", "repo", "create", repo_full_name, "--private", "-y"], cwd=project_path):
                     SUMMARY_LOG.append(f"* **GitHub:** Created new private repository `{repo_full_name}`.")
-                else:
-                    SUMMARY_LOG.append(f"* **GitHub:** Failed to create repository.")
-            
             NEXT_STEPS.append("Push the initial commit to GitHub: `git add . && git commit -m 'Initial commit' && git push -u origin main`.")
         else:
             print("  [Skipped] GitHub repo creation requires a username in the config file.")
 
     print_header("Generating Final Documentation")
-    
     (project_path / "doc").mkdir(exist_ok=True)
-    getting_started = f"""
-# Getting Started with {project_name}
-
-This project was scaffolded on {datetime.now().strftime("%Y-%m-%d")}.
-Here is a summary of the configuration and your next steps.
-
-## Project Summary
-
-"""
+    getting_started = f"# Getting Started with {project_name}\n\nThis project was scaffolded on {datetime.now().strftime('%Y-%m-%d')}.\nHere is a summary of the configuration and your next steps.\n\n## Project Summary\n\n"
     getting_started += "\n".join(sorted(SUMMARY_LOG))
-    
     if NEXT_STEPS:
         getting_started += "\n\n## Next Steps\n\n"
         for i, step in enumerate(sorted(list(set(NEXT_STEPS))), 1):
             getting_started += f"{i}. {step}\n"
-            
     write_file(project_path / "doc" / "GETTING_STARTED.md", getting_started)
     
     print_header("✅ Project Scaffolding Complete!")
     print(f"Your new project is ready at: ./{project_name}")
     print(f"A summary and next steps guide has been created at: ./{project_name}/doc/GETTING_STARTED.md")
-
 
 if __name__ == "__main__":
     try:
@@ -614,3 +512,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n\nOperation cancelled by user. Exiting.")
         sys.exit(0)
+        
