@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Project Scaffolding Script (v6)
+Project Scaffolding Script (v7)
 
 This script interactively scaffolds a new software project based on user input.
 It supports both single-language projects and complex, multi-language monorepos.
@@ -175,7 +175,7 @@ def get_gitignore_content(languages):
     lang_specific_map = {
         "Python": "# Python\n__pycache__/\n*.pyc\n*.pyo\nvenv/\n.pytest_cache/\n",
         "C++": "# C++\n*.o\n*.out\n*.exe\n*.dll\n*.so\n*.a\nCMakeLists.txt.user\n**/CMakeCache.txt\n**/CMakeFiles/\n",
-        "Rust": "# Rust\n/target/\n",
+        "Rust": "# Rust\n# Ignore all target directories\n**/target/\n",
         "Dart/Flutter": "# Flutter\n.dart_tool/\n.packages\n",
     }
     lang_specific_content = "\n".join(lang_specific_map.get(lang, "") for lang in languages)
